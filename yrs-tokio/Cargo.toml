@@ -8,7 +8,7 @@ authors = ["Bartosz Sypytkowski <b.sypytkowski@gmail.com>"]
 keywords = ["crdt", "yrs", "warp"]
 homepage = "https://github.com/y-crdt/yrs-warp/"
 repository = "https://github.com/y-crdt/yrs-warp/"
-readme = "./README.md"
+readme = "README.md"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

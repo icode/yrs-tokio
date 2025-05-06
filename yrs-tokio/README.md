@@ -4,7 +4,7 @@ This library is an extension over [Yjs](https://yjs.dev)/[Yrs](https://github.co
 
 ### Demo
 
-A working demo can be seen under [examples](./examples) subfolder. It integrates this library API with Code Mirror 6, enhancing it with collaborative rich text document editing capabilities.
+A working demo can be seen under [examples](examples) subfolder. It integrates this library API with Code Mirror 6, enhancing it with collaborative rich text document editing capabilities.
 
 ### Example
 
