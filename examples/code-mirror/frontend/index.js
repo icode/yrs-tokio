@@ -1,11 +1,11 @@
 import * as Y from 'yjs'
-import { yCollab } from 'y-codemirror.next'
-import { EditorView, basicSetup } from "codemirror";
-import { EditorState } from "@codemirror/state";
-import { javascript } from '@codemirror/lang-javascript'
-import {syntaxHighlighting, defaultHighlightStyle} from "@codemirror/language"
+import {yCollab} from 'y-codemirror.next'
+import {EditorView} from "codemirror";
+import {EditorState} from "@codemirror/state";
+import {javascript} from '@codemirror/lang-javascript'
+import {defaultHighlightStyle, syntaxHighlighting} from "@codemirror/language"
 import * as random from 'lib0/random'
-import {WebrtcProvider} from "y-webrtc";
+import {WebsocketProvider} from "y-websocket";
 
 export const usercolors = [
     { color: '#30bced', light: '#30bced33' },
@@ -24,7 +24,7 @@ export const userColor = usercolors[random.uint32() % usercolors.length]
 const doc = new Y.Doc()
 const ytext = doc.getText('codemirror')
 
-const provider = new WebrtcProvider('sample', doc, { signaling: ['ws://localhost:8000/signaling'] })
+const provider = new WebsocketProvider('ws://localhost:8000', 'my-room', doc, { disableBc: true })
 
 const undoManager = new Y.UndoManager(ytext)
 
