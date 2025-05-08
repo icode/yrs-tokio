@@ -7,7 +7,7 @@ Replicated Data Types (CRDT) message exchange protocol,
 and it does not have communication protocol restrictions.
 It provides an utilities connect with Yjs provider using Rust tokio.
 And it can support almost all tokio based frameworks,
-e.g., [tokio-tungstenite](../yrs-tokio-tungstenite), [axum](../yrs-axum-ws), [warp](../yrs-warp-ws), [Rocket](../yrs-rocket-ws)
+e.g., [tokio-tungstenite](/yrs-tokio-tungstenite), [axum](/yrs-axum-ws), [warp](/yrs-warp-ws), [Rocket](/yrs-rocket-ws)
 and so on.
 
 ### Examples
@@ -15,10 +15,10 @@ and so on.
 In order to gossip updates between different web socket connections from clients collaborating over the same logical
 document, a broadcast group can be used. See examples:
 
-- [tokio-tungstenite](../yrs-tokio-tungstenite/examples)
-- [axum](../yrs-axum-ws/examples)
-- [warp](../yrs-warp-ws/examples)
-- [Rocket](../yrs-rocket-ws/examples)
+- [tokio-tungstenite](/yrs-tokio-tungstenite/examples)
+- [axum](/yrs-axum-ws/examples)
+- [warp](/yrs-warp-ws/examples)
+- [Rocket](/yrs-rocket-ws/examples)
 
 ### Custom framework example
 
