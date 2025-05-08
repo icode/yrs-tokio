@@ -5,14 +5,15 @@ use warp::ws::{WebSocket, Ws};
 use warp::{Filter, Rejection, Reply};
 use yrs::sync::Awareness;
 use yrs::{Doc, Text, Transact};
-use yrs_warp::broadcast::BroadcastGroup;
-use yrs_warp::ws::{WarpSink, WarpStream};
-use yrs_warp::AwarenessRef;
+use yrs_warp_ws::{YrsSink, YrsStream};
+use yrs_tokio::AwarenessRef;
+use yrs_tokio::broadcast::BroadcastGroup;
 
-const STATIC_FILES_DIR: &str = "examples/code-mirror/frontend/dist";
 
 #[tokio::main]
 async fn main() {
+    let static_files_dir: String = format!("{}/../examples/code-mirror/frontend/dist", env!("CARGO_MANIFEST_DIR"));
+    
     // We're using a single static document shared among all the peers.
     let awareness: AwarenessRef = {
         let doc = Doc::new();
@@ -34,7 +35,7 @@ async fn main() {
     // and has a pending message buffer of up to 32 updates
     let bcast = Arc::new(BroadcastGroup::new(awareness.clone(), 32).await);
 
-    let static_files = warp::get().and(warp::fs::dir(STATIC_FILES_DIR));
+    let static_files = warp::get().and(warp::fs::dir(static_files_dir));
 
     let ws = warp::path("my-room")
         .and(warp::ws())
@@ -52,8 +53,8 @@ async fn ws_handler(ws: Ws, bcast: Arc<BroadcastGroup>) -> Result<impl Reply, Re
 
 async fn peer(ws: WebSocket, bcast: Arc<BroadcastGroup>) {
     let (sink, stream) = ws.split();
-    let sink = Arc::new(Mutex::new(WarpSink::from(sink)));
-    let stream = WarpStream::from(stream);
+    let sink = Arc::new(Mutex::new(YrsSink::from(sink)));
+    let stream = YrsStream::from(stream);
     let sub = bcast.subscribe(sink, stream);
     match sub.completed().await {
         Ok(_) => println!("broadcasting for channel finished successfully"),

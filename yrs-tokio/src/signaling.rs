@@ -1,53 +1,86 @@
-use futures_util::stream::SplitSink;
-use futures_util::{SinkExt, StreamExt};
+use futures_util::{Sink, SinkExt, Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::select;
 use tokio::sync::{Mutex, RwLock};
 use tokio::time::interval;
-use warp::ws::{Message, WebSocket};
-use warp::Error;
+use yrs::sync::Error;
 
 const PING_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// 消息类型
+#[derive(Debug, Clone)]
+pub enum Message {
+    /// 文本消息
+    Text(String),
+    /// 二进制消息
+    Binary(Vec<u8>),
+    /// Ping消息
+    Ping,
+    /// Pong消息
+    Pong,
+    /// 关闭消息
+    Close,
+}
+
+pub const PING_MSG: &str = r#"{"type":"ping"}"#;
+pub const PONG_MSG: &str = r#"{"type":"pong"}"#;
+
+impl Message {
+
+    pub fn is_text(&self) -> bool {
+        matches!(self, Message::Text(_))
+    }
+
+    pub fn is_binary(&self) -> bool {
+        matches!(self, Message::Binary(_))
+    }
+
+    pub fn is_ping(&self) -> bool {
+        matches!(self, Message::Ping)
+    }
+
+    pub fn is_pong(&self) -> bool {
+        matches!(self, Message::Pong)
+    }
+
+    pub fn is_close(&self) -> bool {
+        matches!(self, Message::Close)
+    }
+
+    pub fn into_bytes(self) -> Vec<u8> {
+        match self {
+            Message::Text(s) => s.into_bytes(),
+            Message::Binary(b) => b,
+            Message::Ping => Vec::new(),
+            Message::Pong => Vec::new(),
+            Message::Close => Vec::new(),
+        }
+    }
+
+    pub fn from_bytes(bytes: Vec<u8>) -> Self {
+        if bytes.is_empty() {
+            return Message::Close;
+        }
+        if let Ok(s) = String::from_utf8(bytes.clone()) {
+            Message::Text(s)
+        } else {
+            Message::Binary(bytes)
+        }
+    }
+}
+
 /// Signaling service is used by y-webrtc protocol in order to exchange WebRTC offerings between
 /// clients subscribing to particular rooms.
-///
-/// # Example
-///
-/// ```rust
-/// use warp::{Filter, Rejection, Reply};
-/// use warp::ws::{Ws, WebSocket};
-/// use yrs_warp::signaling::{SignalingService, signaling_conn};
-///
-/// fn main() {
-///   let signaling = SignalingService::new();
-///   let ws = warp::path("signaling")
-///       .and(warp::ws())
-///       .and(warp::any().map(move || signaling.clone()))
-///       .and_then(ws_handler);
-///
-///   //warp::serve(routes).run(([0, 0, 0, 0], 8000)).await;
-/// }
-///
-/// async fn ws_handler(ws: Ws, svc: SignalingService) -> Result<impl Reply, Rejection> {
-///   Ok(ws.on_upgrade(move |socket| peer(socket, svc)))
-/// }
-///
-/// async fn peer(ws: WebSocket, svc: SignalingService) {
-///   match signaling_conn(ws, svc).await {
-///     Ok(_) => println!("signaling connection stopped"),
-///     Err(e) => eprintln!("signaling connection failed: {}", e),
-///   }
-/// }
-/// ```
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SignalingService(Topics);
 
-impl SignalingService {
+impl SignalingService
+{
     pub fn new() -> Self {
         SignalingService(Arc::new(RwLock::new(Default::default())))
     }
@@ -109,25 +142,31 @@ impl SignalingService {
     }
 }
 
-impl Default for SignalingService {
+impl Default for SignalingService
+{
     fn default() -> Self {
         Self::new()
     }
 }
 
-type Topics = Arc<RwLock<HashMap<Arc<str>, HashSet<WsSink>>>>;
+type Topics = Arc<RwLock<HashMap<Arc<str>, HashSet<SignalSink>>>>;
 
-#[derive(Debug, Clone)]
-struct WsSink(Arc<Mutex<SplitSink<WebSocket, Message>>>);
+type DynSink = dyn Sink<Message, Error = Error> + Send + Sync + Unpin;
 
-impl WsSink {
-    fn new(sink: SplitSink<WebSocket, Message>) -> Self {
-        WsSink(Arc::new(Mutex::new(sink)))
+#[derive(Clone)]
+struct SignalSink(Arc<Mutex<Pin<Box<DynSink>>>>);
+
+impl SignalSink {
+    pub fn new<S>(sink: S) -> Self
+    where
+        S: Sink<Message, Error = Error> + Send + Sync + Unpin + 'static,
+    {
+        SignalSink(Arc::new(Mutex::new(Box::pin(sink))))
     }
 
-    async fn try_send(&self, msg: Message) -> Result<(), Error> {
+    pub async fn try_send(&self, msg: Message) -> Result<(), Error> {
         let mut sink = self.0.lock().await;
-        if let Err(e) = sink.send(msg).await {
+        if let Err(e) = sink.as_mut().send(msg).await {
             sink.close().await?;
             Err(e)
         } else {
@@ -135,46 +174,55 @@ impl WsSink {
         }
     }
 
-    async fn close(&self) -> Result<(), Error> {
+    pub async fn close(&self) -> Result<(), Error> {
         let mut sink = self.0.lock().await;
-        sink.close().await
+        sink.as_mut().close().await
     }
 }
 
-impl Hash for WsSink {
+impl Hash for SignalSink
+{
     fn hash<H: Hasher>(&self, state: &mut H) {
         let ptr = Arc::as_ptr(&self.0) as usize;
         ptr.hash(state);
     }
 }
 
-impl PartialEq<Self> for WsSink {
+impl PartialEq<Self> for SignalSink
+{
     fn eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
     }
 }
 
-impl Eq for WsSink {}
+impl Eq for SignalSink {}
 
-/// Handle incoming signaling connection - it's a websocket connection used by y-webrtc protocol
+/// Handle incoming signaling connection - it's a connection used by y-webrtc protocol
 /// to exchange offering metadata between y-webrtc peers. It also manages topic/room access.
-pub async fn signaling_conn(ws: WebSocket, service: SignalingService) -> Result<(), Error> {
-    let mut topics: Topics = service.0;
-    let (sink, mut stream) = ws.split();
-    let ws = WsSink::new(sink);
+pub async fn signaling_connection<S, T>(
+    sink: S,
+    mut stream: T,
+    service: SignalingService,
+) -> Result<(), Error>
+where
+    S: Sink<Message, Error = Error> + Send + Sync + Unpin + 'static,
+    T: Stream<Item = Result<Message, Error>> + Unpin + Send + 'static,
+{
+    let topics_ref = &service.0;
+    let signal_sink = SignalSink::new(sink);
     let mut ping_interval = interval(PING_TIMEOUT);
     let mut state = ConnState::default();
     loop {
         select! {
             _ = ping_interval.tick() => {
                 if !state.pong_received {
-                    ws.close().await?;
+                    signal_sink.close().await?;
                     drop(ping_interval);
                     return Ok(());
                 } else {
                     state.pong_received = false;
-                    if let Err(e) = ws.try_send(Message::ping(Vec::default())).await {
-                        ws.close().await?;
+                    if let Err(e) = signal_sink.try_send(Message::Ping).await {
+                        signal_sink.close().await?;
                         return Err(e);
                     }
                 }
@@ -182,15 +230,15 @@ pub async fn signaling_conn(ws: WebSocket, service: SignalingService) -> Result<
             res = stream.next() => {
                 match res {
                     None => {
-                        ws.close().await?;
+                        signal_sink.close().await?;
                         return Ok(());
                     },
                     Some(Err(e)) => {
-                        ws.close().await?;
+                        signal_sink.close().await?;
                         return Err(e);
                     },
                     Some(Ok(msg)) => {
-                        process_msg(msg, &ws, &mut state, &mut topics).await?;
+                        process_msg::<S>(msg, &signal_sink, &mut state, &topics_ref).await?;
                     }
                 }
             }
@@ -198,101 +246,112 @@ pub async fn signaling_conn(ws: WebSocket, service: SignalingService) -> Result<
     }
 }
 
-const PING_MSG: &'static str = r#"{"type":"ping"}"#;
-const PONG_MSG: &'static str = r#"{"type":"pong"}"#;
-
-async fn process_msg(
+async fn process_msg<S>(
     msg: Message,
-    ws: &WsSink,
+    sink: &SignalSink,
     state: &mut ConnState,
-    topics: &mut Topics,
-) -> Result<(), Error> {
-    if msg.is_text() {
-        let json = msg.to_str().unwrap();
-        let msg = serde_json::from_str(json).unwrap();
-        match msg {
-            Signal::Subscribe {
-                topics: topic_names,
-            } => {
-                if !topic_names.is_empty() {
-                    let mut topics = topics.write().await;
-                    for topic in topic_names {
-                        tracing::trace!("subscribing new client to '{topic}'");
-                        if let Some((key, _)) = topics.get_key_value(topic) {
-                            state.subscribed_topics.insert(key.clone());
-                            let subs = topics.get_mut(topic).unwrap();
-                            subs.insert(ws.clone());
-                        } else {
-                            let topic: Arc<str> = topic.into();
-                            state.subscribed_topics.insert(topic.clone());
-                            let mut subs = HashSet::new();
-                            subs.insert(ws.clone());
-                            topics.insert(topic, subs);
-                        };
-                    }
-                }
-            }
-            Signal::Unsubscribe {
-                topics: topic_names,
-            } => {
-                if !topic_names.is_empty() {
-                    let mut topics = topics.write().await;
-                    for topic in topic_names {
-                        if let Some(subs) = topics.get_mut(topic) {
-                            tracing::trace!("unsubscribing client from '{topic}'");
-                            subs.remove(ws);
-                        }
-                    }
-                }
-            }
-            Signal::Publish { topic } => {
-                let mut failed = Vec::new();
-                {
-                    let topics = topics.read().await;
-                    if let Some(receivers) = topics.get(topic) {
-                        let client_count = receivers.len();
-                        tracing::trace!(
-                            "publishing on {client_count} clients at '{topic}': {json}"
-                        );
-                        for receiver in receivers.iter() {
-                            if let Err(e) = receiver.try_send(Message::text(json)).await {
-                                tracing::info!(
-                                    "failed to publish message {json} on '{topic}': {e}"
-                                );
-                                failed.push(receiver.clone());
+    topics: &Topics,
+) -> Result<(), Error>
+where
+    S: Sink<Message, Error = Error> + Send + Sync + Unpin + 'static,
+{
+    match msg {
+        Message::Text(json) => {
+            if let Ok(signal) = serde_json::from_str::<Signal>(&json) {
+                match signal {
+                    Signal::Subscribe { topics: topic_names } => {
+                        if !topic_names.is_empty() {
+                            let mut topics = topics.write().await;
+                            for topic in topic_names {
+                                tracing::trace!("subscribing new client to '{topic}'");
+                                if let Some((key, _)) = topics.get_key_value(topic) {
+                                    state.subscribed_topics.insert(key.clone());
+                                    let subs = topics.get_mut(topic).unwrap();
+                                    subs.insert(sink.clone());
+                                } else {
+                                    let topic: Arc<str> = topic.into();
+                                    state.subscribed_topics.insert(topic.clone());
+                                    let mut subs = HashSet::new();
+                                    subs.insert(sink.clone());
+                                    topics.insert(topic, subs);
+                                };
                             }
                         }
                     }
-                }
-                if !failed.is_empty() {
-                    let mut topics = topics.write().await;
-                    if let Some(receivers) = topics.get_mut(topic) {
-                        for f in failed {
-                            receivers.remove(&f);
+                    Signal::Unsubscribe { topics: topic_names } => {
+                        if !topic_names.is_empty() {
+                            let mut topics = topics.write().await;
+                            for topic in topic_names {
+                                if let Some(subs) = topics.get_mut(topic) {
+                                    tracing::trace!("unsubscribing client from '{topic}'");
+                                    subs.remove(&sink);
+                                }
+                            }
                         }
+                    }
+                    Signal::Publish { topic } => {
+                        let mut failed = Vec::new();
+                        {
+                            let topics = topics.read().await;
+                            if let Some(receivers) = topics.get(topic) {
+                                let client_count = receivers.len();
+                                tracing::trace!(
+                                    "publishing on {client_count} clients at '{topic}': {json}"
+                                );
+                                for receiver in receivers.iter() {
+                                    if let Err(e) = receiver.try_send(Message::Text(json.clone())).await {
+                                        tracing::info!(
+                                            "failed to publish message {json} on '{topic}': {e}"
+                                        );
+                                        failed.push(receiver.clone());
+                                    }
+                                }
+                            }
+                        }
+                        if !failed.is_empty() {
+                            let mut topics = topics.write().await;
+                            if let Some(receivers) = topics.get_mut(topic) {
+                                for f in failed {
+                                    receivers.remove(&f);
+                                }
+                            }
+                        }
+                    }
+                    Signal::Ping => {
+                        tracing::trace!("received text ping, sending pong");
+                        sink.try_send(Message::Text(PONG_MSG.into())).await?;
+                    }
+                    Signal::Pong => {
+                        tracing::trace!("received text pong, sending ping");
+                        sink.try_send(Message::Text(PING_MSG.into())).await?;
                     }
                 }
             }
-            Signal::Ping => {
-                ws.try_send(Message::text(PONG_MSG)).await?;
-            }
-            Signal::Pong => {
-                ws.try_send(Message::text(PING_MSG)).await?;
-            }
         }
-    } else if msg.is_close() {
-        let mut topics = topics.write().await;
-        for topic in state.subscribed_topics.drain() {
-            if let Some(subs) = topics.get_mut(&topic) {
-                subs.remove(ws);
-                if subs.is_empty() {
-                    topics.remove(&topic);
+        Message::Binary(data) => {
+            tracing::trace!("received binary message: {} bytes", data.len());
+            sink.try_send(Message::Binary(data)).await?;
+        }
+        Message::Ping => {
+            tracing::trace!("received ping, sending pong");
+            sink.try_send(Message::Pong).await?;
+        }
+        Message::Pong => {
+            tracing::trace!("received pong, ignore");
+        }
+        Message::Close => {
+            tracing::trace!("received close message, cleaning up subscriptions");
+            let mut topics = topics.write().await;
+            for topic in state.subscribed_topics.drain() {
+                if let Some(subs) = topics.get_mut(&topic) {
+                    subs.remove(&sink);
+                    if subs.is_empty() {
+                        topics.remove(&topic);
+                    }
                 }
             }
+            state.closed = true;
         }
-        state.closed = true;
-    } else if msg.is_ping() {
-        ws.try_send(Message::ping(Vec::default())).await?;
     }
     Ok(())
 }
@@ -327,4 +386,88 @@ pub(crate) enum Signal<'a> {
     Ping,
     #[serde(rename = "pong")]
     Pong,
+}
+
+#[macro_export]
+macro_rules! impl_signal_stream_body {
+    ($item_pat:pat => $item_expr:expr) => {
+        type Item = Result<$crate::signaling::Message, yrs::sync::Error>;
+
+        fn poll_next(
+            mut self: ::core::pin::Pin<&mut Self>,
+            cx: &mut ::core::task::Context<'_>,
+        ) -> ::core::task::Poll<Option<Self::Item>> {
+            let inner = ::core::pin::Pin::new(&mut self.0);
+            match inner.poll_next(cx) {
+                ::core::task::Poll::Ready(Some(Ok($item_pat))) => {
+                    ::core::task::Poll::Ready(Some(Ok($item_expr)))
+                },
+                ::core::task::Poll::Ready(Some(Err(e))) => {
+                    ::core::task::Poll::Ready(Some(Err(yrs::sync::Error::Other(e.into()))))
+                },
+                ::core::task::Poll::Ready(None) => ::core::task::Poll::Ready(None),
+                ::core::task::Poll::Pending => ::core::task::Poll::Pending,
+            }
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! impl_yrs_signal_stream {
+    // 带 external where 子句的泛型
+    ($name:ident<$($gen:ident),+> where $($where_clause:tt)+, $item_pat:pat => $item_expr:expr) => {
+        impl<$($gen),+> ::futures::stream::Stream for $name<$($gen),+>
+        where
+            $($gen: ::tokio::io::AsyncRead + ::tokio::io::AsyncWrite + ::core::marker::Unpin),+,
+            $($($where_clause)+)?
+        {
+            $crate::impl_signal_stream_body!($item_pat => $item_expr);
+        }
+    };
+
+    // 不带 external where 的泛型
+    ($name:ident<$($gen:ident),+>, $item_pat:pat => $item_expr:expr) => {
+        impl<$($gen),+> ::futures::stream::Stream for $name<$($gen),+>
+        where
+            $($gen: ::tokio::io::AsyncRead + ::tokio::io::AsyncWrite + ::core::marker::Unpin),+
+        {
+            $crate::impl_signal_stream_body!($item_pat => $item_expr);
+        }
+    };
+
+    // 无泛型参数
+    ($name:ident, $item_pat:pat => $item_expr:expr) => {
+        impl ::futures::stream::Stream for $name {
+            $crate::impl_signal_stream_body!($item_pat => $item_expr);
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! to_signaling_message_common {
+    ($item:ident, custom $($user_logic:tt)*) => {
+        match $item {
+            Message::Text(text) => SignalingMessage::Text(text.to_string()),
+            Message::Binary(bytes) => SignalingMessage::Binary(bytes.into()),
+            Message::Ping(_) => SignalingMessage::Ping,
+            Message::Pong(_) => SignalingMessage::Pong,
+            Message::Close(_) => SignalingMessage::Close,
+            $($user_logic)*
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! to_signaling_message {
+    ($item:ident, frame) => {
+        $crate::to_signaling_message_common!($item, custom Message::Frame(frame) => SignalingMessage::Binary(frame.into_payload().into()),)
+    };
+
+    ($item:ident, custom $($user_logic:tt)+) => {
+         $crate::to_signaling_message_common!($item, custom $($user_logic)+)
+    };
+
+    ($item:ident) => {
+        $crate::to_signaling_message_common!($item, custom)
+    };
 }

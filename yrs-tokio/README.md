@@ -1,16 +1,47 @@
-# Yrs web socket connections
+# yrs-tokio
 
-This library is an extension over [Yjs](https://yjs.dev)/[Yrs](https://github.com/y-crdt/y-crdt) Conflict-Free Replicated Data Types (CRDT) message exchange protocol. It provides an utilities connect with Yjs web socket provider using Rust tokio's [warp](https://github.com/seanmonstar/warp) web server.
+> Yrs message exchange protocol base on tokio
 
-### Demo
+This library is an extension over [Yjs](https://yjs.dev)/[Yrs](https://github.com/y-crdt/y-crdt) Conflict-Free
+Replicated Data Types (CRDT) message exchange protocol,
+and it does not have communication protocol restrictions.
+It provides an utilities connect with Yjs provider using Rust tokio.
+And it can support almost all tokio based frameworks,
+e.g., [tokio-tungstenite](../yrs-tokio-tungstenite), [axum](../yrs-axum-ws), [warp](../yrs-warp-ws), [Rocket](../yrs-rocket-ws)
+and so on.
 
-A working demo can be seen under [examples](examples) subfolder. It integrates this library API with Code Mirror 6, enhancing it with collaborative rich text document editing capabilities.
+### Examples
 
-### Example
+In order to gossip updates between different web socket connections from clients collaborating over the same logical
+document, a broadcast group can be used. See examples:
 
-In order to gossip updates between different web socket connection from the clients collaborating over the same logical document, a broadcast group can be used:
+- [tokio-tungstenite](../yrs-tokio-tungstenite/examples)
+- [axum](../yrs-axum-ws/examples)
+- [warp](../yrs-warp-ws/examples)
+- [Rocket](../yrs-rocket-ws/examples)
+
+### Custom framework example
+
+You can use frameworks based on tokio that are not yet supported, just like the following:
 
 ```rust
+use axum::extract::ws::{Message, WebSocket};
+use futures_util::stream::{SplitSink, SplitStream};
+use futures_util::Sink;
+use yrs_tokio::signaling::Message as SignalingMessage;
+use yrs_tokio::{impl_yrs_signal_stream, to_signaling_message, yrs_common_sink, YrsExchange, YrsSink, YrsStream};
+
+#[derive(YrsStream)]
+pub struct YrsStream(SplitStream<WebSocket>);
+#[derive(YrsExchange)]
+pub struct YrsSignalStream(SplitStream<WebSocket>);
+
+impl_yrs_signal_stream!(YrsSignalStream, item => to_signaling_message!(item));
+
+#[derive(YrsSink)]
+pub struct YrsSink(SplitSink<WebSocket, Message>);
+#[yrs_common_sink]
+impl Sink<SignalingMessage> for YrsSink {}
 
 #[tokio::main]
 async fn main() {
@@ -21,22 +52,27 @@ async fn main() {
     // and has a pending message buffer of up to 32 updates
     let bcast = Arc::new(BroadcastGroup::new(awareness, 32).await);
 
-    let ws = warp::path("my-room")
-        .and(warp::ws())
-        .and(warp::any().map(move || bcast.clone()))
-        .and_then(ws_handler);
+    let addr = SocketAddr::from_str("0.0.0.0:8080").unwrap();
 
-    warp::serve(ws).run(([0, 0, 0, 0], 8000)).await;
+    let app = Router::new()
+        .route("/my-room", any(ws_handler))
+        .with_state(bcast);
+
+    spawn(async move {
+        let listener = TcpListener::bind(addr).await.unwrap();
+        axum::serve(listener, app).await.unwrap();
+    });
 }
 
-async fn ws_handler(ws: Ws, bcast: Arc<BroadcastGroup>) -> Result<impl Reply, Rejection> {
-    Ok(ws.on_upgrade(move |socket| peer(socket, bcast)))
+async fn ws_handler(ws: WebSocketUpgrade, State(bcast): State<Arc<BroadcastGroup>>) -> Response {
+    ws.on_upgrade(move |socket| peer(socket, bcast))
 }
 
 async fn peer(ws: WebSocket, bcast: Arc<BroadcastGroup>) {
     let (sink, stream) = ws.split();
-    let sink = Arc::new(Mutex::new(WarpSink::from(sink)));
-    let stream = WarpStream::from(stream);
+    let sink = Arc::new(Mutex::new(YrsSink::from(sink)));
+    let stream = YrsStream::from(stream);
+
     let sub = bcast.subscribe(sink, stream);
     match sub.completed().await {
         Ok(_) => println!("broadcasting for channel finished successfully"),
@@ -47,65 +83,17 @@ async fn peer(ws: WebSocket, bcast: Arc<BroadcastGroup>) {
 
 ## Custom protocol extensions
 
-[y-sync](https://crates.io/crates/y-sync) protocol enables to extend it's own protocol, and yrs-warp supports this as well.
-This can be done by implementing your own protocol, eg.:
-
-```rust
-use y_sync::sync::Protocol;
-
-struct EchoProtocol;
-impl Protocol for EchoProtocol {
-    fn missing_handle(
-        &self,
-        awareness: &mut Awareness,
-        tag: u8,
-        data: Vec<u8>,
-    ) -> Result<Option<Message>, Error> {
-        // all messages prefixed with tags unknown to y-sync protocol
-        // will be echo-ed back to the sender
-        Ok(Some(Message::Custom(tag, data)))
-    }
-}
-
-async fn peer(ws: WebSocket, awareness: AwarenessRef) {
-    //.. later in code subscribe with custom protocol parameter
-    let sub = bcast.subscribe_with(sink, stream, EchoProtocol);
-    // .. rest of the code
-}
-```
+[y-sync](https://crates.io/crates/y-sync) protocol enables to extend it's own protocol, and yrs-tokio supports this as
+well.
+This can be done by implementing your own protocol.
 
 ## y-webrtc and signaling service
 
-Additionally to performing it's role as a [y-websocket](https://docs.yjs.dev/ecosystem/connection-provider/y-websocket) 
-server, `yrs-warp` also provides a signaling server implementation used by [y-webrtc](https://github.com/yjs/y-webrtc)
-clients to exchange information necessary to connect WebRTC peers together and make them subscribe/unsubscribe from specific rooms.
+Additionally to performing it's role as a [y-websocket](https://docs.yjs.dev/ecosystem/connection-provider/y-websocket)
+server, tokio also provides a signaling server implementation used by [y-webrtc](https://github.com/yjs/y-webrtc)
+clients to exchange information necessary to connect WebRTC peers together and make them subscribe/unsubscribe from
+specific rooms.
 
-```rust
-use warp::{Filter, Rejection, Reply};
-use warp::ws::{Ws, WebSocket};
-use yrs_warp::signaling::{SignalingService, signaling_conn};
+## Thanks
 
-#[tokio::main]
-async fn main() {
-  let signaling = SignalingService::new();
-  let ws = warp::path("signaling")
-      .and(warp::ws())
-      .and(warp::any().map(move || signaling.clone()))
-      .and_then(ws_handler);
-  warp::serve(routes).run(([0, 0, 0, 0], 8000)).await;
-}
-async fn ws_handler(ws: Ws, svc: SignalingService) -> Result<impl Reply, Rejection> {
-  Ok(ws.on_upgrade(move |socket| peer(socket, svc)))
-}
-async fn peer(ws: WebSocket, svc: SignalingService) {
-  match signaling_conn(ws, svc).await {
-    Ok(_) => println!("signaling connection stopped"),
-    Err(e) => eprintln!("signaling connection failed: {}", e),
-  }
-}
-```
-
-
-## Sponsors
-
-[![NLNET](https://nlnet.nl/image/logo_nlnet.svg)](https://nlnet.nl/)
+`yrs-tokio` fork from [yrs-warp](https://github.com/y-crdt/yrs-warp)

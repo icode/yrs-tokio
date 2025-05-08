@@ -1,0 +1,10 @@
+[workspace]
+resolver = "3"
+members = [
+    "yrs-tokio-macros",
+    "yrs-tokio",
+    "yrs-tokio-tungstenite",
+    "yrs-axum-ws",
+    "yrs-rocket-ws",
+    "yrs-warp-ws"
+]

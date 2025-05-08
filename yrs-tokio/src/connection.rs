@@ -224,7 +224,7 @@ pub async fn handle_msg<P: Protocol>(
 #[cfg(test)]
 mod test {
     use crate::broadcast::BroadcastGroup;
-    use crate::conn::Connection;
+    use crate::connection::Connection;
     use bytes::{Bytes, BytesMut};
     use futures_util::SinkExt;
     use std::net::SocketAddr;

@@ -59,7 +59,7 @@ impl BroadcastGroup {
         };
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let sink = sender.clone();
-        let awareness_sub = lock.on_update(move |e| {
+        let awareness_sub = lock.on_update(move |_, e, _| {
             let added = e.added();
             let updated = e.updated();
             let removed = e.removed();
@@ -268,6 +268,7 @@ impl Subscription {
 mod test {
     use crate::broadcast::BroadcastGroup;
     use futures_util::{ready, SinkExt, StreamExt};
+    use serde_json::json;
     use std::collections::HashMap;
     use std::pin::Pin;
     use std::sync::Arc;
@@ -337,8 +338,8 @@ mod test {
 
         // check awareness update propagation
         {
-            let mut a = awareness.write().await;
-            a.set_local_state(r#"{"key":"value"}"#)
+            let a = awareness.write().await;
+            a.set_local_state(json!({"key":"value"})).ok();
         }
 
         let msg = client_receiver.next().await;
@@ -350,7 +351,7 @@ mod test {
                     1,
                     AwarenessUpdateEntry {
                         clock: 1,
-                        json: r#"{"key":"value"}"#.to_string(),
+                        json: Arc::from(r#"{"key":"value"}"#),
                     },
                 )]),
             }))

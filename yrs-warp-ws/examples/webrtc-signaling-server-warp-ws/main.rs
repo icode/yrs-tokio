@@ -1,14 +1,21 @@
+use futures_util::StreamExt;
+use tracing::Level;
 use warp::ws::{WebSocket, Ws};
 use warp::{Filter, Rejection, Reply};
-use yrs_warp::signaling::{signaling_conn, SignalingService};
-
-const STATIC_FILES_DIR: &str = "examples/webrtc-signaling-server/frontend/dist";
+use yrs_tokio::signaling::{signaling_connection, SignalingService};
+use yrs_warp_ws::{YrsSignalStream, YrsSink};
 
 #[tokio::main]
 async fn main() {
+    let static_files_dir: String = format!("{}/../examples/webrtc-signaling-server/frontend/dist", env!("CARGO_MANIFEST_DIR"));
+    
+    tracing_subscriber::FmtSubscriber::builder()
+        .with_max_level(Level::TRACE)
+        .init();
+
     let signaling = SignalingService::new();
 
-    let static_files = warp::get().and(warp::fs::dir(STATIC_FILES_DIR));
+    let static_files = warp::get().and(warp::fs::dir(static_files_dir));
 
     let ws = warp::path("signaling")
         .and(warp::ws())
@@ -26,7 +33,10 @@ async fn ws_handler(ws: Ws, svc: SignalingService) -> Result<impl Reply, Rejecti
 
 async fn peer(ws: WebSocket, svc: SignalingService) {
     println!("new incoming signaling connection");
-    match signaling_conn(ws, svc).await {
+    let (sink, stream) = ws.split();
+    let sink = YrsSink::from(sink);
+    let stream = YrsSignalStream::from(stream);
+    match signaling_connection(sink, stream, svc).await {
         Ok(_) => println!("signaling connection stopped"),
         Err(e) => eprintln!("signaling connection failed: {}", e),
     }

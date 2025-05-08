@@ -1,0 +1,28 @@
+[package]
+name = "yrs-tokio-macros"
+version = "0.1.0"
+edition = "2024"
+description = "Axum WebSocket integration for yrs-tokio macros"
+license = "MIT"
+authors = ["icode <intelligentcodemail@gmail.com>"]
+keywords = ["crdt", "yrs", "tokio", "macros"]
+
+[dependencies]
+quote = "1.0.35"
+syn = { version = "2", features = ["full"] }
+proc-macro2 = "1.0"
+
+[lib]
+proc-macro = true
+
+[features]
+test-utils = []
+
+[dev-dependencies]
+yrs-tokio = { path = "../yrs-tokio" }
+yrs-axum-ws = { path = "../yrs-axum-ws" }
+yrs = { version="0.23", features = ["weak", "sync"] }
+axum = { version = "0.8", features = ["ws"] }
+tokio = { version = "1", features = ["full", "net"] }
+futures-util = { version = "0.3", features = ["sink"] }
+tokio-tungstenite = { version = "0.26", features = ["native-tls"] }

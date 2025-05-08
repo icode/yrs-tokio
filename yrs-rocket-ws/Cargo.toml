@@ -1,0 +1,22 @@
+[package]
+name = "yrs-rocket-ws"
+version = "0.1.0"
+edition = "2024"
+description = "Rocket WebSocket integration for yrs-tokio"
+license = "MIT"
+authors = ["icode <intelligentcodemail@gmail.com>"]
+keywords = ["crdt", "yrs", "tokio", "rocket", "websocket"]
+
+[dependencies]
+yrs = { version="0.23", features = ["weak", "sync"] }
+yrs-tokio = { path = "../yrs-tokio", features = ["test-utils"] }
+rocket = { version = "0.5" }
+rocket_ws = { version = "0.1" }
+futures-core = "0.3"
+futures-util = { version = "0.3", features = ["sink"] }
+futures = "0.3"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+futures-util = { version = "0.3", features = ["sink"] }
+tokio-tungstenite = { version = "0.26", features = ["native-tls"] }

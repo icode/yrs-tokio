@@ -1,28 +1,29 @@
 [package]
-name = "yrs-warp"
-version = "0.8.0"
-edition = "2021"
-description = "Yrs synchronization protocol using Warp web sockets"
+name = "yrs-tokio"
+version = "0.1.0"
+edition = "2024"
+description = "Yrs synchronization protocol using tokio"
 license = "MIT"
-authors = ["Bartosz Sypytkowski <b.sypytkowski@gmail.com>"]
-keywords = ["crdt", "yrs", "warp"]
-homepage = "https://github.com/y-crdt/yrs-warp/"
-repository = "https://github.com/y-crdt/yrs-warp/"
-readme = "README.md"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+authors = ["Bartosz Sypytkowski <b.sypytkowski@gmail.com>", "icode <intelligentcodemail@gmail.com>"]
+keywords = ["crdt", "yrs", "tokio"]
+homepage = "https://github.com/icode/yrs-tokio"
+repository = "https://github.com/icode/yrs-tokio"
+readme = "./README.md"
 
 [dependencies]
-yrs = "0.18.2"
-warp = "0.3"
+yrs = { version = "0.23.1", features = ["weak", "sync"] }
 futures-util = { version = "0.3", features = ["sink"] }
-tokio = { version = "1.36", features = ["rt", "net", "sync", "macros"] }
+tokio = { version = "1.45", features = ["rt", "net", "sync", "macros", "time"] }
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
 tracing = { version = "0.1", features = ["log"] }
-tokio-util = { version = "0.7.10", features = ["codec"] }
+
+yrs-tokio-macros = { version = "0.1.0", path = "../yrs-tokio-macros" }
 
 [dev-dependencies]
-tokio-tungstenite = "0.21"
 tokio = { version = "1", features = ["full"] }
-bytes = "1.6"
+bytes = "1.10"
+tokio-util = { version = "0.7.10", features = ["codec"] }
+
+[features]
+test-utils = ["yrs-tokio-macros/test-utils"]
