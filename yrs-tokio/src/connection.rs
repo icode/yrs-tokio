@@ -1,6 +1,6 @@
 #![allow(dead_code)]
-use futures_util::sink::SinkExt;
 use futures_util::StreamExt;
+use futures_util::sink::SinkExt;
 use std::future::Future;
 use std::marker::PhantomData;
 use std::pin::Pin;
@@ -9,12 +9,12 @@ use std::task::{Context, Poll};
 use tokio::spawn;
 use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
+use yrs::Update;
 use yrs::encoding::read::Cursor;
 use yrs::sync::Awareness;
 use yrs::sync::{DefaultProtocol, Error, Message, MessageReader, Protocol, SyncMessage};
 use yrs::updates::decoder::{Decode, DecoderV1};
 use yrs::updates::encoder::{Encode, Encoder, EncoderV1};
-use yrs::Update;
 
 /// Connection handler over a pair of message streams, which implements a Yjs/Yrs awareness and
 /// update exchange protocol.
@@ -194,12 +194,12 @@ pub async fn handle_msg<P: Protocol>(
                 protocol.handle_sync_step1(&awareness, sv)
             }
             SyncMessage::SyncStep2(update) => {
-                let mut awareness = a.write().await;
-                protocol.handle_sync_step2(&mut awareness, Update::decode_v1(&update)?)
+                let awareness = a.write().await;
+                protocol.handle_sync_step2(&awareness, Update::decode_v1(&update)?)
             }
             SyncMessage::Update(update) => {
-                let mut awareness = a.write().await;
-                protocol.handle_update(&mut awareness, Update::decode_v1(&update)?)
+                let awareness = a.write().await;
+                protocol.handle_update(&awareness, Update::decode_v1(&update)?)
             }
         },
         Message::Auth(reason) => {
@@ -211,12 +211,12 @@ pub async fn handle_msg<P: Protocol>(
             protocol.handle_awareness_query(&awareness)
         }
         Message::Awareness(update) => {
-            let mut awareness = a.write().await;
-            protocol.handle_awareness_update(&mut awareness, update)
+            let awareness = a.write().await;
+            protocol.handle_awareness_update(&awareness, update)
         }
         Message::Custom(tag, data) => {
-            let mut awareness = a.write().await;
-            protocol.missing_handle(&mut awareness, tag, data)
+            let awareness = a.write().await;
+            protocol.missing_handle(&awareness, tag, data)
         }
     }
 }
@@ -315,18 +315,18 @@ mod test {
     const TIMEOUT: Duration = Duration::from_secs(5);
 
     #[tokio::test]
-    async fn change_introduced_by_server_reaches_subscribed_clients(
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    async fn change_introduced_by_server_reaches_subscribed_clients()
+    -> Result<(), Box<dyn std::error::Error>> {
         let server_addr = SocketAddr::from_str("127.0.0.1:6600").unwrap();
         let doc = Doc::with_client_id(1);
         let text = doc.get_or_insert_text("test");
         let awareness = Arc::new(RwLock::new(Awareness::new(doc)));
         let bcast = BroadcastGroup::new(awareness.clone(), 10).await;
-        let _server = start_server(server_addr.clone(), bcast).await?;
+        let _server = start_server(server_addr, bcast).await?;
 
         let doc = Doc::new();
         let (n, _sub) = create_notifier(&doc);
-        let c1 = client(server_addr.clone(), doc).await?;
+        let c1 = client(server_addr, doc).await?;
 
         {
             let lock = awareness.write().await;

@@ -3,16 +3,16 @@ use crate::AwarenessRef;
 use futures_util::{SinkExt, StreamExt};
 use std::sync::Arc;
 use tokio::select;
-use tokio::sync::broadcast::error::SendError;
-use tokio::sync::broadcast::{channel, Receiver, Sender};
 use tokio::sync::Mutex;
+use tokio::sync::broadcast::error::SendError;
+use tokio::sync::broadcast::{Receiver, Sender, channel};
 use tokio::task::JoinHandle;
+use yrs::Update;
 use yrs::encoding::write::Write;
 use yrs::sync::protocol::{MSG_SYNC, MSG_SYNC_UPDATE};
 use yrs::sync::{DefaultProtocol, Error, Message, Protocol, SyncMessage};
 use yrs::updates::decoder::Decode;
 use yrs::updates::encoder::{Encode, Encoder, EncoderV1};
-use yrs::Update;
 
 /// A broadcast group can be used to propagate updates produced by yrs [yrs::Doc] and [Awareness]
 /// structures in a binary form that conforms to a y-sync protocol.
@@ -204,14 +204,14 @@ impl BroadcastGroup {
                     protocol.handle_sync_step1(&*awareness, state_vector)
                 }
                 SyncMessage::SyncStep2(update) => {
-                    let mut awareness = awareness.write().await;
+                    let awareness = awareness.write().await;
                     let update = Update::decode_v1(&update)?;
-                    protocol.handle_sync_step2(&mut *awareness, update)
+                    protocol.handle_sync_step2(&*awareness, update)
                 }
                 SyncMessage::Update(update) => {
-                    let mut awareness = awareness.write().await;
+                    let awareness = awareness.write().await;
                     let update = Update::decode_v1(&update)?;
-                    protocol.handle_sync_step2(&mut *awareness, update)
+                    protocol.handle_sync_step2(&*awareness, update)
                 }
             },
             Message::Auth(deny_reason) => {
@@ -223,12 +223,12 @@ impl BroadcastGroup {
                 protocol.handle_awareness_query(&*awareness)
             }
             Message::Awareness(update) => {
-                let mut awareness = awareness.write().await;
-                protocol.handle_awareness_update(&mut *awareness, update)
+                let awareness = awareness.write().await;
+                protocol.handle_awareness_update(&*awareness, update)
             }
             Message::Custom(tag, data) => {
-                let mut awareness = awareness.write().await;
-                protocol.missing_handle(&mut *awareness, tag, data)
+                let awareness = awareness.write().await;
+                protocol.missing_handle(&*awareness, tag, data)
             }
         }
     }
@@ -267,7 +267,7 @@ impl Subscription {
 #[cfg(test)]
 mod test {
     use crate::broadcast::BroadcastGroup;
-    use futures_util::{ready, SinkExt, StreamExt};
+    use futures_util::{SinkExt, StreamExt, ready};
     use serde_json::json;
     use std::collections::HashMap;
     use std::pin::Pin;
