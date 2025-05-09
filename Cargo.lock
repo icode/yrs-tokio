@@ -2783,6 +2783,7 @@ name = "yrs-tokio-macros"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "futures-core",
  "futures-util",
  "proc-macro2",
  "quote",
