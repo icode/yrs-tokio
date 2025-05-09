@@ -1,8 +1,10 @@
 use axum::extract::ws::{Message, WebSocket};
-use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::Sink;
+use futures_util::stream::{SplitSink, SplitStream};
 use yrs_tokio::signaling::Message as SignalingMessage;
-use yrs_tokio::{impl_yrs_signal_stream, to_signaling_message, yrs_common_sink, YrsExchange, YrsSink, YrsStream};
+use yrs_tokio::{
+    YrsExchange, YrsSink, YrsStream, impl_yrs_signal_stream, to_signaling_message, yrs_common_sink,
+};
 
 #[derive(YrsStream)]
 pub struct YrsStream(SplitStream<WebSocket>);
@@ -19,17 +21,16 @@ impl Sink<SignalingMessage> for YrsSink {}
 #[cfg(test)]
 mod test {
     use crate::{YrsSink, YrsStream};
+    use axum::Router;
     use axum::extract::ws::WebSocket;
     use axum::extract::{State, WebSocketUpgrade};
     use axum::response::Response;
     use axum::routing::any;
-    use axum::Router;
-    use futures_util::{ready, SinkExt, StreamExt};
+    use futures_util::{SinkExt, StreamExt};
     use std::net::SocketAddr;
     use std::str::FromStr;
     use std::sync::Arc;
     use tokio::sync::Mutex;
-    use tokio::task;
     use tokio::task::JoinHandle;
     use yrs::updates::encoder::Encode;
     use yrs::{GetString, Text, Transact};

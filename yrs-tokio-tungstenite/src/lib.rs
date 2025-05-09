@@ -1,10 +1,12 @@
-use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::Sink;
+use futures_util::stream::{SplitSink, SplitStream};
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::WebSocketStream;
+use tokio_tungstenite::tungstenite::Message;
 use yrs_tokio::signaling::Message as SignalingMessage;
-use yrs_tokio::{impl_yrs_signal_stream, to_signaling_message, yrs_common_sink, yrs_stream, YrsExchange, YrsSink};
+use yrs_tokio::{
+    YrsExchange, YrsSink, impl_yrs_signal_stream, to_signaling_message, yrs_common_sink, yrs_stream,
+};
 
 #[yrs_stream(into=into_data().into())]
 pub struct YrsStream<S>(SplitStream<WebSocketStream<S>>)
@@ -28,15 +30,14 @@ impl<S> Sink<SignalingMessage> for YrsSink<S> where S: AsyncRead + AsyncWrite + 
 #[cfg(test)]
 mod test {
     use crate::{YrsSink, YrsStream};
-    use futures_util::{ready, SinkExt, StreamExt};
+    use futures_util::{SinkExt, StreamExt};
     use std::net::SocketAddr;
     use std::str::FromStr;
     use std::sync::Arc;
     use tokio::net::{TcpListener, TcpStream};
     use tokio::sync::Mutex;
-    use tokio::task;
     use tokio::task::JoinHandle;
-    use tokio_tungstenite::{accept_async, MaybeTlsStream, WebSocketStream};
+    use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, accept_async};
     use yrs::updates::encoder::Encode;
     use yrs::{GetString, Text, Transact};
     use yrs_tokio::broadcast::BroadcastGroup;

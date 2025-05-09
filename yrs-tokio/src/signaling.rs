@@ -31,7 +31,6 @@ pub const PING_MSG: &str = r#"{"type":"ping"}"#;
 pub const PONG_MSG: &str = r#"{"type":"pong"}"#;
 
 impl Message {
-
     pub fn is_text(&self) -> bool {
         matches!(self, Message::Text(_))
     }
@@ -79,8 +78,7 @@ impl Message {
 #[derive(Clone)]
 pub struct SignalingService(Topics);
 
-impl SignalingService
-{
+impl SignalingService {
     pub fn new() -> Self {
         SignalingService(Arc::new(RwLock::new(Default::default())))
     }
@@ -142,8 +140,7 @@ impl SignalingService
     }
 }
 
-impl Default for SignalingService
-{
+impl Default for SignalingService {
     fn default() -> Self {
         Self::new()
     }
@@ -180,16 +177,14 @@ impl SignalSink {
     }
 }
 
-impl Hash for SignalSink
-{
+impl Hash for SignalSink {
     fn hash<H: Hasher>(&self, state: &mut H) {
         let ptr = Arc::as_ptr(&self.0) as usize;
         ptr.hash(state);
     }
 }
 
-impl PartialEq<Self> for SignalSink
-{
+impl PartialEq<Self> for SignalSink {
     fn eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
     }
@@ -259,7 +254,9 @@ where
         Message::Text(json) => {
             if let Ok(signal) = serde_json::from_str::<Signal>(&json) {
                 match signal {
-                    Signal::Subscribe { topics: topic_names } => {
+                    Signal::Subscribe {
+                        topics: topic_names,
+                    } => {
                         if !topic_names.is_empty() {
                             let mut topics = topics.write().await;
                             for topic in topic_names {
@@ -278,7 +275,9 @@ where
                             }
                         }
                     }
-                    Signal::Unsubscribe { topics: topic_names } => {
+                    Signal::Unsubscribe {
+                        topics: topic_names,
+                    } => {
                         if !topic_names.is_empty() {
                             let mut topics = topics.write().await;
                             for topic in topic_names {
@@ -299,7 +298,9 @@ where
                                     "publishing on {client_count} clients at '{topic}': {json}"
                                 );
                                 for receiver in receivers.iter() {
-                                    if let Err(e) = receiver.try_send(Message::Text(json.clone())).await {
+                                    if let Err(e) =
+                                        receiver.try_send(Message::Text(json.clone())).await
+                                    {
                                         tracing::info!(
                                             "failed to publish message {json} on '{topic}': {e}"
                                         );
@@ -386,88 +387,4 @@ pub(crate) enum Signal<'a> {
     Ping,
     #[serde(rename = "pong")]
     Pong,
-}
-
-#[macro_export]
-macro_rules! impl_signal_stream_body {
-    ($item_pat:pat => $item_expr:expr) => {
-        type Item = Result<$crate::signaling::Message, yrs::sync::Error>;
-
-        fn poll_next(
-            mut self: ::core::pin::Pin<&mut Self>,
-            cx: &mut ::core::task::Context<'_>,
-        ) -> ::core::task::Poll<Option<Self::Item>> {
-            let inner = ::core::pin::Pin::new(&mut self.0);
-            match inner.poll_next(cx) {
-                ::core::task::Poll::Ready(Some(Ok($item_pat))) => {
-                    ::core::task::Poll::Ready(Some(Ok($item_expr)))
-                },
-                ::core::task::Poll::Ready(Some(Err(e))) => {
-                    ::core::task::Poll::Ready(Some(Err(yrs::sync::Error::Other(e.into()))))
-                },
-                ::core::task::Poll::Ready(None) => ::core::task::Poll::Ready(None),
-                ::core::task::Poll::Pending => ::core::task::Poll::Pending,
-            }
-        }
-    };
-}
-
-#[macro_export]
-macro_rules! impl_yrs_signal_stream {
-    // 带 external where 子句的泛型
-    ($name:ident<$($gen:ident),+> where $($where_clause:tt)+, $item_pat:pat => $item_expr:expr) => {
-        impl<$($gen),+> ::futures::stream::Stream for $name<$($gen),+>
-        where
-            $($gen: ::tokio::io::AsyncRead + ::tokio::io::AsyncWrite + ::core::marker::Unpin),+,
-            $($($where_clause)+)?
-        {
-            $crate::impl_signal_stream_body!($item_pat => $item_expr);
-        }
-    };
-
-    // 不带 external where 的泛型
-    ($name:ident<$($gen:ident),+>, $item_pat:pat => $item_expr:expr) => {
-        impl<$($gen),+> ::futures::stream::Stream for $name<$($gen),+>
-        where
-            $($gen: ::tokio::io::AsyncRead + ::tokio::io::AsyncWrite + ::core::marker::Unpin),+
-        {
-            $crate::impl_signal_stream_body!($item_pat => $item_expr);
-        }
-    };
-
-    // 无泛型参数
-    ($name:ident, $item_pat:pat => $item_expr:expr) => {
-        impl ::futures::stream::Stream for $name {
-            $crate::impl_signal_stream_body!($item_pat => $item_expr);
-        }
-    };
-}
-
-#[macro_export]
-macro_rules! to_signaling_message_common {
-    ($item:ident, custom $($user_logic:tt)*) => {
-        match $item {
-            Message::Text(text) => SignalingMessage::Text(text.to_string()),
-            Message::Binary(bytes) => SignalingMessage::Binary(bytes.into()),
-            Message::Ping(_) => SignalingMessage::Ping,
-            Message::Pong(_) => SignalingMessage::Pong,
-            Message::Close(_) => SignalingMessage::Close,
-            $($user_logic)*
-        }
-    };
-}
-
-#[macro_export]
-macro_rules! to_signaling_message {
-    ($item:ident, frame) => {
-        $crate::to_signaling_message_common!($item, custom Message::Frame(frame) => SignalingMessage::Binary(frame.into_payload().into()),)
-    };
-
-    ($item:ident, custom $($user_logic:tt)+) => {
-         $crate::to_signaling_message_common!($item, custom $($user_logic)+)
-    };
-
-    ($item:ident) => {
-        $crate::to_signaling_message_common!($item, custom)
-    };
 }

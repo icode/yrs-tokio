@@ -1,10 +1,10 @@
-use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::Sink;
-use rocket_ws::stream::DuplexStream;
+use futures_util::stream::{SplitSink, SplitStream};
 use rocket_ws::Message;
+use rocket_ws::stream::DuplexStream;
 use yrs_tokio::signaling::Message as SignalingMessage;
 use yrs_tokio::{
-    impl_yrs_signal_stream, to_signaling_message, yrs_common_sink, YrsExchange, YrsSink, YrsStream,
+    YrsExchange, YrsSink, YrsStream, impl_yrs_signal_stream, to_signaling_message, yrs_common_sink,
 };
 
 #[derive(YrsStream)]
@@ -21,15 +21,14 @@ impl Sink<SignalingMessage> for YrsSink {}
 #[cfg(test)]
 mod test {
     use crate::{YrsSink, YrsStream};
-    use futures_util::{ready, SinkExt, StreamExt};
-    use rocket::{get, routes, State};
+    use futures_util::{SinkExt, ready};
+    use rocket::{State, get, routes};
     use rocket_ws::stream::DuplexStream;
     use rocket_ws::{Channel, WebSocket};
     use std::net::SocketAddr;
     use std::str::FromStr;
     use std::sync::Arc;
     use tokio::sync::Mutex;
-    use tokio::task;
     use tokio::task::JoinHandle;
     use yrs::updates::encoder::Encode;
     use yrs::{GetString, Text, Transact};

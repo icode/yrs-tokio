@@ -3,6 +3,7 @@ use tokio::sync::RwLock;
 
 pub mod broadcast;
 pub mod connection;
+pub mod macros;
 pub mod signaling;
 
 pub use yrs_tokio_macros::*;

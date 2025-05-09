@@ -1,10 +1,10 @@
-use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::Sink;
+use futures_util::stream::{SplitSink, SplitStream};
 use std::pin::Pin;
 use warp::ws::{Message, WebSocket};
 use yrs::sync::Error;
 use yrs_tokio::signaling::Message as SignalingMessage;
-use yrs_tokio::{impl_yrs_signal_stream, yrs_common_sink, YrsExchange, YrsStream};
+use yrs_tokio::{YrsExchange, YrsStream, impl_yrs_signal_stream, yrs_common_sink};
 
 #[derive(YrsStream)]
 pub struct YrsStream(SplitStream<WebSocket>);
@@ -61,12 +61,11 @@ impl Sink<SignalingMessage> for YrsSink {
 #[cfg(test)]
 mod test {
     use crate::{YrsSink, YrsStream};
-    use futures_util::{ready, SinkExt, StreamExt};
+    use futures_util::{SinkExt, StreamExt};
     use std::net::SocketAddr;
     use std::str::FromStr;
     use std::sync::Arc;
     use tokio::sync::Mutex;
-    use tokio::task;
     use tokio::task::JoinHandle;
     use warp::ws::{WebSocket, Ws};
     use warp::{Filter, Rejection, Reply};

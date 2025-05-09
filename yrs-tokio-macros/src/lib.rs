@@ -1,9 +1,9 @@
 use proc_macro::TokenStream;
-use quote::{format_ident, quote, ToTokens};
+use quote::{ToTokens, format_ident, quote};
 use syn::parse::{Parse, ParseStream};
 use syn::{
-    parse_macro_input, Data, DeriveInput, Expr, Fields, Generics, Ident, ImplItem, ImplItemFn, ImplItemType,
-    ItemFn, ItemImpl, ItemStruct, LitBool, LitStr, Token, Type,
+    Data, DeriveInput, Expr, Fields, Generics, Ident, ImplItem, ImplItemFn, ImplItemType, ItemImpl,
+    ItemStruct, LitBool, LitStr, Token, Type, parse_macro_input,
 };
 
 /// Yrs tokio common test unit generator
@@ -66,13 +66,58 @@ use syn::{
 #[cfg(feature = "test-utils")]
 #[proc_macro_attribute]
 pub fn yrs_common_test(_: TokenStream, item: TokenStream) -> TokenStream {
-    let input_fn = parse_macro_input!(item as ItemFn);
+    let input_fn = parse_macro_input!(item as syn::ItemFn);
     let fn_name = &input_fn.sig.ident;
     let original_fn_def = input_fn.to_token_stream();
 
     quote! {
-        #original_fn_def
+        // ===============================================================
+        // 在生成的代码块中定义辅助宏和类型，供测试函数使用
+        // ===============================================================
 
+        // 辅助宏: 用于委托 poll_* 方法调用到内部 sink，并进行错误转换
+        macro_rules! delegate_poll_method {
+            ($self:expr, $cx:expr, $method:ident $(($($arg:expr),*))?) => {{
+                use ::std::task::Poll;
+                use ::std::task::ready;
+                let sink = unsafe { ::std::pin::Pin::new_unchecked(&mut $self.0) };
+                let result = ready!(sink.$method($($($arg),*)?));
+                match result {
+                    Ok(_) => Poll::Ready(Ok(())),
+                    Err(e) => Poll::Ready(Err(::yrs::sync::Error::Other(Box::new(e)))),
+                }
+            }};
+        }
+
+        // 辅助宏: 用于委托 Result 方法调用到内部 sink，并进行错误转换 (如 start_send)
+        macro_rules! delegate_result_method {
+            ($self:expr, $method:ident $(($($arg:expr),*))?) => {{
+                let sink = unsafe { ::std::pin::Pin::new_unchecked(&mut $self.0) };
+                let result = sink.$method($($($arg),*)?);
+                match result {
+                    Ok(_) => Ok(()),
+                    Err(e) => Err(::yrs::sync::Error::Other(Box::new(e))),
+                }
+            }};
+        }
+
+        // 辅助宏: 用于委托 Stream 的 poll_next 方法调用到内部 stream，并进行错误转换和数据处理
+        macro_rules! delegate_stream_poll_next {
+            ($self:expr, $cx:expr) => {{
+                use ::std::task::Poll;
+                use ::std::task::ready;
+                let stream = unsafe { ::std::pin::Pin::new_unchecked(&mut $self.0) };
+                let result = ready!(stream.poll_next($cx));
+                match result {
+                    None => Poll::Ready(None),
+                    Some(Ok(msg)) => Poll::Ready(Some(Ok(msg.into_data().into()))),
+                    Some(Err(e)) => Poll::Ready(Some(Err(::yrs::sync::Error::Other(Box::new(e))))),
+                }
+            }};
+        }
+
+
+        // 定义 TungsteniteSink，并使用辅助宏简化其 Sink 实现
         struct TungsteniteSink(::futures_util::stream::SplitSink<::tokio_tungstenite::WebSocketStream<::tokio_tungstenite::MaybeTlsStream<::tokio::net::TcpStream>>, ::tokio_tungstenite::tungstenite::Message>);
 
         impl ::futures_util::Sink<Vec<u8>> for TungsteniteSink {
@@ -82,69 +127,45 @@ pub fn yrs_common_test(_: TokenStream, item: TokenStream) -> TokenStream {
                 mut self: ::std::pin::Pin<&mut Self>,
                 cx: &mut ::std::task::Context<'_>,
             ) -> ::std::task::Poll<Result<(), Self::Error>> {
-                let sink = unsafe { ::std::pin::Pin::new_unchecked(&mut self.0) };
-                let result = ready!(sink.poll_ready(cx));
-                match result {
-                    Ok(_) => ::std::task::Poll::Ready(Ok(())),
-                    Err(e) => ::std::task::Poll::Ready(Err(::yrs::sync::Error::Other(Box::new(e)))),
-                }
+                delegate_poll_method!(self, cx, poll_ready(cx))
             }
 
             fn start_send(mut self: ::std::pin::Pin<&mut Self>, item: Vec<u8>) -> Result<(), Self::Error> {
-                let sink = unsafe { ::std::pin::Pin::new_unchecked(&mut self.0) };
-                let result = sink.start_send(::tokio_tungstenite::tungstenite::Message::binary(item));
-                match result {
-                    Ok(_) => Ok(()),
-                    Err(e) => Err(::yrs::sync::Error::Other(Box::new(e))),
-                }
+                delegate_result_method!(self, start_send(::tokio_tungstenite::tungstenite::Message::binary(item)))
             }
 
             fn poll_flush(
                 mut self: ::std::pin::Pin<&mut Self>,
                 cx: &mut ::std::task::Context<'_>,
             ) -> ::std::task::Poll<Result<(), Self::Error>> {
-                let sink = unsafe { ::std::pin::Pin::new_unchecked(&mut self.0) };
-                let result = ready!(sink.poll_flush(cx));
-                match result {
-                    Ok(_) => ::std::task::Poll::Ready(Ok(())),
-                    Err(e) => ::std::task::Poll::Ready(Err(::yrs::sync::Error::Other(Box::new(e)))),
-                }
+                delegate_poll_method!(self, cx, poll_flush(cx))
             }
 
             fn poll_close(
                 mut self: ::std::pin::Pin<&mut Self>,
                 cx: &mut ::std::task::Context<'_>,
             ) -> ::std::task::Poll<Result<(), Self::Error>> {
-                let sink = unsafe { ::std::pin::Pin::new_unchecked(&mut self.0) };
-                let result = ready!(sink.poll_close(cx));
-                match result {
-                    Ok(_) => ::std::task::Poll::Ready(Ok(())),
-                    Err(e) => ::std::task::Poll::Ready(Err(::yrs::sync::Error::Other(Box::new(e)))),
-                }
+                delegate_poll_method!(self, cx, poll_close(cx))
             }
         }
 
+        // 定义 TungsteniteStream，并使用辅助宏简化其 Stream 实现
         struct TungsteniteStream(::futures_util::stream::SplitStream<::tokio_tungstenite::WebSocketStream<::tokio_tungstenite::MaybeTlsStream<::tokio::net::TcpStream>>>);
         impl ::futures_util::Stream for TungsteniteStream {
             type Item = Result<Vec<u8>, ::yrs::sync::Error>;
 
             fn poll_next(mut self: ::std::pin::Pin<&mut Self>, cx: &mut ::std::task::Context<'_>) -> ::std::task::Poll<Option<Self::Item>> {
-                let stream = unsafe { ::std::pin::Pin::new_unchecked(&mut self.0) };
-                let result = ready!(stream.poll_next(cx));
-                match result {
-                    None => ::std::task::Poll::Ready(None),
-                    Some(Ok(msg)) => ::std::task::Poll::Ready(Some(Ok(msg.into_data().into()))),
-                    Some(Err(e)) => ::std::task::Poll::Ready(Some(Err(::yrs::sync::Error::Other(Box::new(e))))),
-                }
+                delegate_stream_poll_next!(self, cx)
             }
         }
 
+        // 定义 client 辅助函数
         async fn client(
             addr: &str,
             doc: ::yrs::Doc,
         ) -> Result<::yrs_tokio::connection::Connection<TungsteniteSink, TungsteniteStream>, Box<dyn std::error::Error>> {
-            let (stream, _) = tokio_tungstenite::connect_async(addr).await?;
-            let (sink, stream) = stream.split();
+            let (stream, _) = ::tokio_tungstenite::connect_async(addr).await?;
+            let (sink, stream) = ::futures_util::stream::StreamExt::split(stream);
             let sink = TungsteniteSink(sink);
             let stream = TungsteniteStream(stream);
             Ok(::yrs_tokio::connection::Connection::new(
@@ -154,6 +175,7 @@ pub fn yrs_common_test(_: TokenStream, item: TokenStream) -> TokenStream {
             ))
         }
 
+        // 定义 create_notifier 辅助函数
         fn create_notifier(doc: &::yrs::Doc) -> (::std::sync::Arc<::tokio::sync::Notify>, ::yrs::Subscription) {
             let n = ::std::sync::Arc::new(::tokio::sync::Notify::new());
             let sub = {
@@ -164,9 +186,79 @@ pub fn yrs_common_test(_: TokenStream, item: TokenStream) -> TokenStream {
             (n, sub)
         }
 
+        // 定义 TIMEOUT 常量
         const TIMEOUT: ::std::time::Duration = ::std::time::Duration::from_secs(5);
 
-        #[tokio::test]
+        // 定义辅助函数：设置客户端文档更新时自动发送消息 (修改为 async)
+        async fn setup_client_update_propagation( // <--- 添加 async
+            conn: &::yrs_tokio::connection::Connection<TungsteniteSink, TungsteniteStream>
+        ) -> ::yrs::Subscription { // <--- 返回 Subscription
+            let sink = conn.sink(); // Weak<Mutex<TungsteniteSink>>, 'static lifetime
+            let awareness_arc = conn.awareness().clone(); // Arc<RwLock<Awareness<Doc>>>, 'static lifetime
+
+            // 将获取 Doc 引用和设置 observe_update_v1 的同步操作移到阻塞任务中
+            let sub_handle: ::tokio::task::JoinHandle<::yrs::Subscription> = ::tokio::task::spawn_blocking(move || { // <--- 使用 spawn_blocking
+                 // 这个闭包在阻塞线程池上执行，可以安全地调用 blocking_read()
+                 let awareness_guard = awareness_arc.blocking_read(); // <--- 现在安全了
+                 let doc = awareness_guard.doc();
+                 let inner_sink = sink.clone(); // 克隆 Weak 引用给 observer 闭包使用
+
+                 // 设置 observe_update_v1 监听器
+                 doc.observe_update_v1(move |_, e| {
+                    // 这个回调函数可能在任意线程上被调用，取决于 yrs 内部的实现，
+                    // 但内部生成新的异步任务是安全的方式。
+                    let update = e.update.to_owned();
+                    if let Some(sink) = inner_sink.upgrade() {
+                         // 在异步运行时上生成新任务来发送消息
+                         ::tokio::task::spawn(async move {
+                            let msg = ::yrs::sync::Message::Sync(::yrs::sync::SyncMessage::Update(update))
+                                .encode_v1();
+                            let mut sink_guard = sink.lock().await;
+                            sink_guard.send(msg).await.unwrap();
+                        });
+                    }
+                 })
+                 .unwrap() // 获取 Subscription
+            });
+
+            // 在 async 函数中等待阻塞任务的结果 (Subscription)
+            sub_handle.await.unwrap() // <--- Await the JoinHandle
+        }
+
+        // 定义辅助函数：检查客户端文档中 "test" 文本的内容
+        async fn check_client_text_content(
+            conn: &::yrs_tokio::connection::Connection<TungsteniteSink, TungsteniteStream>,
+            expected_str: &str,
+        ) {
+            let awareness = conn.awareness().read().await;
+            let doc = awareness.doc();
+            let text = doc.get_or_insert_text("test");
+            let str = text.get_string(&doc.transact());
+            ::core::assert_eq!(str, expected_str.to_string());
+        }
+
+         // 定义辅助函数：修改客户端或服务端文档中 "test" 文本的内容
+         async fn apply_text_change(
+             awareness: &::std::sync::Arc<::tokio::sync::RwLock<::yrs::sync::Awareness>>,
+             change_str: &str,
+         ) {
+             let mut lock = awareness.write().await;
+             let doc = lock.doc();
+             let text = doc.get_or_insert_text("test");
+             text.push(&mut doc.transact_mut(), change_str);
+         }
+
+
+        // ===============================================================
+        // 原始被修饰的函数定义 (例如，这是服务端的启动函数)
+        // ===============================================================
+        #original_fn_def
+
+        // ===============================================================
+        // 使用上面定义的辅助项的测试用例
+        // ===============================================================
+
+        #[::tokio::test]
         async fn change_introduced_by_server_reaches_subscribed_clients() {
             let doc = ::yrs::Doc::with_client_id(1);
             let text = doc.get_or_insert_text("test");
@@ -178,23 +270,14 @@ pub fn yrs_common_test(_: TokenStream, item: TokenStream) -> TokenStream {
             let (n, _sub) = create_notifier(&doc);
             let c1 = client("ws://localhost:6600/my-room", doc).await.unwrap();
 
-            {
-                let lock = awareness.write().await;
-                text.push(&mut lock.doc().transact_mut(), "abc");
-            }
+            apply_text_change(&awareness, "abc").await;
 
             ::tokio::time::timeout(TIMEOUT, n.notified()).await.unwrap();
 
-            {
-                let awareness = c1.awareness().read().await;
-                let doc = awareness.doc();
-                let text = doc.get_or_insert_text("test");
-                let str = text.get_string(&doc.transact());
-                assert_eq!(str, "abc".to_string());
-            }
+            check_client_text_content(&c1, "abc").await;
         }
 
-        #[tokio::test]
+        #[::tokio::test]
         async fn subscribed_client_fetches_initial_state() {
             let doc = ::yrs::Doc::with_client_id(1);
             let text = doc.get_or_insert_text("test");
@@ -211,16 +294,10 @@ pub fn yrs_common_test(_: TokenStream, item: TokenStream) -> TokenStream {
 
             ::tokio::time::timeout(TIMEOUT, n.notified()).await.unwrap();
 
-            {
-                let awareness = c1.awareness().read().await;
-                let doc = awareness.doc();
-                let text = doc.get_or_insert_text("test");
-                let str = text.get_string(&doc.transact());
-                assert_eq!(str, "abc".to_string());
-            }
+            check_client_text_content(&c1, "abc").await;
         }
 
-        #[tokio::test]
+        #[::tokio::test]
         async fn changes_from_one_client_reach_others() {
             let doc = ::yrs::Doc::with_client_id(1);
             let _ = doc.get_or_insert_text("test");
@@ -231,48 +308,22 @@ pub fn yrs_common_test(_: TokenStream, item: TokenStream) -> TokenStream {
 
             let d1 = ::yrs::Doc::with_client_id(2);
             let c1 = client("ws://localhost:6602/my-room", d1).await.unwrap();
-            // by default changes made by document on the client side are not propagated automatically
-            let _sub11 = {
-                let sink = c1.sink();
-                let a = c1.awareness().write().await;
-                let doc = a.doc();
-                doc.observe_update_v1(move |_, e| {
-                    let update = e.update.to_owned();
-                    if let Some(sink) = sink.upgrade() {
-                        task::spawn(async move {
-                            let msg = yrs::sync::Message::Sync(yrs::sync::SyncMessage::Update(update))
-                                .encode_v1();
-                            let mut sink = sink.lock().await;
-                            sink.send(msg).await.unwrap();
-                        });
-                    }
-                })
-                    .unwrap()
-            };
+            // 使用辅助函数设置客户端更新传播 (现在是 async，需要 .await)
+            let _sub11 = setup_client_update_propagation(&c1).await;
+
 
             let d2 = ::yrs::Doc::with_client_id(3);
             let (n2, _sub2) = create_notifier(&d2);
             let c2 = client("ws://localhost:6602/my-room", d2).await.unwrap();
 
-            {
-                let a = c1.awareness().write().await;
-                let doc = a.doc();
-                let text = doc.get_or_insert_text("test");
-                text.push(&mut doc.transact_mut(), "def");
-            }
+            apply_text_change(&c1.awareness(), "def").await;
 
             ::tokio::time::timeout(TIMEOUT, n2.notified()).await.unwrap();
 
-            {
-                let awareness = c2.awareness().read().await;
-                let doc = awareness.doc();
-                let text = doc.get_or_insert_text("test");
-                let str = text.get_string(&doc.transact());
-                assert_eq!(str, "def".to_string());
-            }
+            check_client_text_content(&c2, "def").await;
         }
 
-        #[tokio::test]
+        #[::tokio::test]
         async fn client_failure_doesnt_affect_others() {
             let doc = ::yrs::Doc::with_client_id(1);
             let _text = doc.get_or_insert_text("test");
@@ -283,24 +334,8 @@ pub fn yrs_common_test(_: TokenStream, item: TokenStream) -> TokenStream {
 
             let d1 = ::yrs::Doc::with_client_id(2);
             let c1 = client("ws://localhost:6603/my-room", d1).await.unwrap();
-            // by default changes made by document on the client side are not propagated automatically
-            let _sub11 = {
-                let sink = c1.sink();
-                let a = c1.awareness().write().await;
-                let doc = a.doc();
-                doc.observe_update_v1(move |_, e| {
-                    let update = e.update.to_owned();
-                    if let Some(sink) = sink.upgrade() {
-                        task::spawn(async move {
-                            let msg = yrs::sync::Message::Sync(yrs::sync::SyncMessage::Update(update))
-                                .encode_v1();
-                            let mut sink = sink.lock().await;
-                            sink.send(msg).await.unwrap();
-                        });
-                    }
-                })
-                    .unwrap()
-            };
+            // 使用辅助函数设置客户端更新传播 (现在是 async，需要 .await)
+            let _sub11 = setup_client_update_propagation(&c1).await;
 
             let d2 = ::yrs::Doc::with_client_id(3);
             let (n2, sub2) = create_notifier(&d2);
@@ -310,63 +345,31 @@ pub fn yrs_common_test(_: TokenStream, item: TokenStream) -> TokenStream {
             let (n3, sub3) = create_notifier(&d3);
             let c3 = client("ws://localhost:6603/my-room", d3).await.unwrap();
 
-            {
-                let a = c1.awareness().write().await;
-                let doc = a.doc();
-                let text = doc.get_or_insert_text("test");
-                text.push(&mut doc.transact_mut(), "abc");
-            }
+            apply_text_change(&c1.awareness(), "abc").await;
 
-            // on the first try both C2 and C3 should receive the update
-            //::tokio::time::timeout(TIMEOUT, n2.notified()).await.unwrap();
-            //::tokio::time::timeout(TIMEOUT, n3.notified()).await.unwrap();
             ::tokio::time::sleep(TIMEOUT).await;
 
-            {
-                let awareness = c2.awareness().read().await;
-                let doc = awareness.doc();
-                let text = doc.get_or_insert_text("test");
-                let str = text.get_string(&doc.transact());
-                assert_eq!(str, "abc".to_string());
-            }
-            {
-                let awareness = c3.awareness().read().await;
-                let doc = awareness.doc();
-                let text = doc.get_or_insert_text("test");
-                let str = text.get_string(&doc.transact());
-                assert_eq!(str, "abc".to_string());
-            }
+            check_client_text_content(&c2, "abc").await;
+            check_client_text_content(&c3, "abc").await;
 
-            // drop client, causing abrupt ending
             drop(c3);
             drop(n3);
             drop(sub3);
-            // C2 notification subscription has been realized, we need to refresh it
             drop(n2);
             drop(sub2);
 
-            let (n2, _sub2) = {
-                let a = c2.awareness().write().await;
+            // 重新创建 notifier
+             let (n2, _sub2) = {
+                let a = c2.awareness().read().await;
                 let doc = a.doc();
                 create_notifier(doc)
             };
 
-            {
-                let a = c1.awareness().write().await;
-                let doc = a.doc();
-                let text = doc.get_or_insert_text("test");
-                text.push(&mut doc.transact_mut(), "def");
-            }
+            apply_text_change(&c1.awareness(), "def").await;
 
             ::tokio::time::timeout(TIMEOUT, n2.notified()).await.unwrap();
 
-            {
-                let awareness = c2.awareness().read().await;
-                let doc = awareness.doc();
-                let text = doc.get_or_insert_text("test");
-                let str = text.get_string(&doc.transact());
-                assert_eq!(str, "abcdef".to_string());
-            }
+            check_client_text_content(&c2, "abcdef").await;
         }
     }.into()
 }
@@ -423,15 +426,12 @@ pub fn yrs_stream(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// # Examples
 /// ```rust
 /// use yrs_tokio_macros::YrsStream;
-/// use tokio_tungstenite::WebSocketStream;
-/// use tokio::io::{AsyncRead, AsyncWrite};
 /// use std::marker::Unpin;
+/// use axum::extract::ws::WebSocket;
 /// use futures_util::stream::SplitStream;
 ///
-/// #[derive(YrsStream)]
-/// pub struct YrsStream<S>(SplitStream<WebSocketStream<S>>)
-/// where
-///     S: AsyncRead + AsyncWrite + Unpin + Send;
+///#[derive(YrsStream)]
+///pub struct YrsStream(SplitStream<WebSocket>);
 /// ```
 #[proc_macro_derive(YrsStream)]
 pub fn derive_yrs_stream(input: TokenStream) -> TokenStream {
@@ -455,15 +455,12 @@ pub fn derive_yrs_stream(input: TokenStream) -> TokenStream {
 /// # Examples
 /// ```rust
 /// use yrs_tokio_macros::YrsStreamOnly;
-/// use tokio_tungstenite::WebSocketStream;
-/// use tokio::io::{AsyncRead, AsyncWrite};
 /// use std::marker::Unpin;
+/// use axum::extract::ws::WebSocket;
 /// use futures_util::stream::SplitStream;
 ///
-/// #[derive(YrsStreamOnly)]
-/// pub struct YrsStream<S>(SplitStream<WebSocketStream<S>>)
-/// where
-///     S: AsyncRead + AsyncWrite + Unpin + Send;
+///#[derive(YrsStreamOnly)]
+///pub struct YrsStream(SplitStream<WebSocket>);
 /// ```
 #[proc_macro_derive(YrsStreamOnly)]
 pub fn derive_yrs_stream_only(input: TokenStream) -> TokenStream {
@@ -472,7 +469,7 @@ pub fn derive_yrs_stream_only(input: TokenStream) -> TokenStream {
 
     let input_struct = parse_macro_input!(input as DeriveInput);
     let generics = input_struct.generics.clone();
-    let input_for_derive_impl = input_struct.into_token_stream().into(); // 转换回 TokenStream 传递给 derive_impl
+    let input_for_derive_impl = input_struct.into_token_stream().into();
 
     yrs_stream_code_gen(
         default_target,
@@ -647,6 +644,38 @@ pub fn derive_yrs_sink_only(input: TokenStream) -> TokenStream {
     derive_yrs_sink_gen(input, false)
 }
 
+fn generate_poll_method_item(method_name: &str) -> ImplItemFn {
+    let ident = format_ident!("{}", method_name);
+    let inner_field_access = quote::quote!(self.0);
+
+    syn::parse_quote! {
+        fn #ident(
+            mut self: ::core::pin::Pin<&mut Self>,
+            cx: &mut ::core::task::Context<'_>,
+        ) -> ::core::task::Poll<Result<(), Self::Error>> {
+            match ::core::pin::Pin::new(&mut #inner_field_access).#ident(cx) {
+                ::core::task::Poll::Pending => ::core::task::Poll::Pending,
+                ::core::task::Poll::Ready(Err(e)) => ::core::task::Poll::Ready(Err(::yrs::sync::Error::Other(e.into()))),
+                ::core::task::Poll::Ready(_) => ::core::task::Poll::Ready(Ok(())),
+            }
+        }
+    }
+}
+
+fn generate_start_send_method_item() -> ImplItemFn {
+    let inner_field_access = quote::quote!(self.0);
+
+    syn::parse_quote! {
+        fn start_send(
+            mut self: ::core::pin::Pin<&mut Self>,
+            item: Vec<u8>,
+        ) -> Result<(), Self::Error> {
+            ::core::pin::Pin::new(&mut #inner_field_access).start_send(item.into())
+                .map_err(|e| ::yrs::sync::Error::Other(e.into()))
+        }
+    }
+}
+
 fn derive_yrs_sink_gen(input: TokenStream, gen_exchange: bool) -> TokenStream {
     derive_impl(input, "YrsSink", move |name, field_type, generics| {
         let from_into: Option<proc_macro2::TokenStream> = if gen_exchange {
@@ -657,57 +686,24 @@ fn derive_yrs_sink_gen(input: TokenStream, gen_exchange: bool) -> TokenStream {
 
         let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
+        let poll_ready_fn = generate_poll_method_item("poll_ready");
+        let poll_flush_fn = generate_poll_method_item("poll_flush");
+        let poll_close_fn = generate_poll_method_item("poll_close");
+        let start_send_fn = generate_start_send_method_item();
+
         quote! {
             #from_into
 
             impl #impl_generics ::futures_util::Sink<Vec<u8>> for #name #ty_generics #where_clause {
-                type Error = yrs::sync::Error;
+                type Error = ::yrs::sync::Error;
 
-                fn poll_ready(
-                    mut self: ::core::pin::Pin<&mut Self>,
-                    cx: &mut ::core::task::Context<'_>,
-                ) -> ::core::task::Poll<Result<(), Self::Error>> {
-                    match ::core::pin::Pin::new(&mut self.0).poll_ready(cx) {
-                        ::core::task::Poll::Pending => ::core::task::Poll::Pending,
-                        ::core::task::Poll::Ready(Err(e)) => ::core::task::Poll::Ready(Err(yrs::sync::Error::Other(e.into()))),
-                        ::core::task::Poll::Ready(_) => ::core::task::Poll::Ready(Ok(())),
-                    }
-                }
-
-                fn start_send(
-                    mut self: ::core::pin::Pin<&mut Self>,
-                    item: Vec<u8>,
-                ) -> Result<(), Self::Error> {
-                    if let Err(e) = ::core::pin::Pin::new(&mut self.0).start_send(item.into()) {
-                        Err(yrs::sync::Error::Other(e.into()))
-                    } else {
-                        Ok(())
-                    }
-                }
-
-                fn poll_flush(
-                    mut self: ::core::pin::Pin<&mut Self>,
-                    cx: &mut ::core::task::Context<'_>,
-                ) -> ::core::task::Poll<Result<(), Self::Error>> {
-                    match ::core::pin::Pin::new(&mut self.0).poll_flush(cx) {
-                        ::core::task::Poll::Pending => ::core::task::Poll::Pending,
-                        ::core::task::Poll::Ready(Err(e)) => ::core::task::Poll::Ready(Err(yrs::sync::Error::Other(e.into()))),
-                        ::core::task::Poll::Ready(_) => ::core::task::Poll::Ready(Ok(())),
-                    }
-                }
-
-                fn poll_close(
-                    mut self: ::core::pin::Pin<&mut Self>,
-                    cx: &mut ::core::task::Context<'_>,
-                ) -> ::core::task::Poll<Result<(), Self::Error>> {
-                    match ::core::pin::Pin::new(&mut self.0).poll_close(cx) {
-                        ::core::task::Poll::Pending => ::core::task::Poll::Pending,
-                        ::core::task::Poll::Ready(Err(e)) => ::core::task::Poll::Ready(Err(yrs::sync::Error::Other(e.into()))),
-                        ::core::task::Poll::Ready(_) => ::core::task::Poll::Ready(Ok(())),
-                    }
-                }
+                #poll_ready_fn
+                #start_send_fn
+                #poll_flush_fn
+                #poll_close_fn
             }
-        }.into()
+        }
+        .into()
     })
 }
 
@@ -755,7 +751,7 @@ impl Parse for CommonSinkArgs {
 }
 
 // 辅助函数：从 impl Sink<Item> for ... 头部解析出 Item 类型
-fn get_sink_item_type(input: &ItemImpl) -> Result<Type, proc_macro::TokenStream> {
+fn get_sink_item_type(input: &ItemImpl) -> Result<Type, TokenStream> {
     // <--- 修改返回类型为 Type
     let trait_option = input.trait_.as_ref();
     let trait_ref =
@@ -813,13 +809,11 @@ fn get_sink_item_type(input: &ItemImpl) -> Result<Type, proc_macro::TokenStream>
     let generic_arg = args.args.first().unwrap();
     match generic_arg {
         syn::GenericArgument::Type(ty) => Ok(ty.clone()),
-        arg => {
-            return Err(
-                syn::Error::new_spanned(arg, "Sink trait argument must be a type")
-                    .to_compile_error()
-                    .into(),
-            );
-        }
+        arg => Err(
+            syn::Error::new_spanned(arg, "Sink trait argument must be a type")
+                .to_compile_error()
+                .into(),
+        ),
     }
 }
 
@@ -929,13 +923,14 @@ pub fn yrs_common_sink(attr: TokenStream, item: TokenStream) -> TokenStream {
         Some(method) => method,
         None => {
             let target_simple_signaling: Type = syn::parse_quote!(SignalingMessage);
-            let target_fully_qualified_signaling: Type = syn::parse_quote!(::yrs_tokio::signaling::Message);
+            let target_fully_qualified_signaling: Type =
+                syn::parse_quote!(::yrs_tokio::signaling::Message);
             let target_qualified_signaling: Type = syn::parse_quote!(yrs_tokio::signaling::Message);
 
-            let is_targeted_signaling_message_type = outer_sink_item_type == target_simple_signaling
+            let is_targeted_signaling_message_type = outer_sink_item_type
+                == target_simple_signaling
                 || outer_sink_item_type == target_fully_qualified_signaling
                 || outer_sink_item_type == target_qualified_signaling;
-
 
             let default_body = if is_targeted_signaling_message_type {
                 quote! {
@@ -963,42 +958,18 @@ pub fn yrs_common_sink(attr: TokenStream, item: TokenStream) -> TokenStream {
             };
 
             syn::parse_quote! {
-                 fn start_send(mut self: ::core::pin::Pin<&mut Self>, item: #outer_sink_item_type) -> Result<(), Self::Error> {
-                     #default_body
-                 }
-             }
-        }
-    };
-
-    let generated_poll_ready: ImplItemFn = syn::parse_quote! {
-        fn poll_ready(mut self: ::core::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Result<(), Self::Error>> {
-            match ::core::pin::Pin::new(&mut #inner_expr).poll_ready(cx) {
-                std::task::Poll::Pending => std::task::Poll::Pending,
-                std::task::Poll::Ready(Err(e)) => std::task::Poll::Ready(Err(::yrs::sync::Error::Other(e.into()))),
-                std::task::Poll::Ready(_) => std::task::Poll::Ready(Ok(())),
+                fn start_send(mut self: ::core::pin::Pin<&mut Self>, item: #outer_sink_item_type) -> Result<(), Self::Error> {
+                    #default_body
+                }
             }
         }
     };
 
-    let generated_poll_flush: ImplItemFn = syn::parse_quote! {
-        fn poll_flush(mut self: ::core::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Result<(), Self::Error>> {
-            match ::core::pin::Pin::new(&mut #inner_expr).poll_flush(cx) {
-                std::task::Poll::Pending => std::task::Poll::Pending,
-                std::task::Poll::Ready(Err(e)) => std::task::Poll::Ready(Err(::yrs::sync::Error::Other(e.into()))),
-                std::task::Poll::Ready(_) => std::task::Poll::Ready(Ok(())),
-            }
-        }
-    };
+    let generated_poll_ready = generate_poll_fn("poll_ready", &inner_expr);
 
-    let generated_poll_close: ImplItemFn = syn::parse_quote! {
-        fn poll_close(mut self: ::core::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Result<(), Self::Error>> {
-            match ::core::pin::Pin::new(&mut #inner_expr).poll_close(cx) {
-                std::task::Poll::Pending => std::task::Poll::Pending,
-                std::task::Poll::Ready(Err(e)) => std::task::Poll::Ready(Err(::yrs::sync::Error::Other(e.into()))),
-                std::task::Poll::Ready(_) => std::task::Poll::Ready(Ok(())),
-            }
-        }
-    };
+    let generated_poll_flush = generate_poll_fn("poll_flush", &inner_expr);
+
+    let generated_poll_close = generate_poll_fn("poll_close", &inner_expr);
 
     let mut final_items: Vec<ImplItem> = Vec::new();
 
@@ -1013,6 +984,23 @@ pub fn yrs_common_sink(attr: TokenStream, item: TokenStream) -> TokenStream {
     impl_block.items = final_items;
 
     quote!(#impl_block).into()
+}
+
+fn generate_poll_fn(method: &str, inner_expr: &proc_macro2::TokenStream) -> ImplItemFn {
+    let ident = format_ident!("{}", method);
+
+    syn::parse_quote! {
+        fn #ident(
+            mut self: ::core::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
+            match ::core::pin::Pin::new(&mut #inner_expr).#ident(cx) {
+                std::task::Poll::Pending => std::task::Poll::Pending,
+                std::task::Poll::Ready(Err(e)) => std::task::Poll::Ready(Err(::yrs::sync::Error::Other(e.into()))),
+                std::task::Poll::Ready(_) => std::task::Poll::Ready(Ok(())),
+            }
+        }
+    }
 }
 
 fn quote_from_into(

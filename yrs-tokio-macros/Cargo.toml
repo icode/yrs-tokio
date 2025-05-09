@@ -11,18 +11,20 @@ keywords = ["crdt", "yrs", "tokio", "macros"]
 quote = "1.0.35"
 syn = { version = "2", features = ["full"] }
 proc-macro2 = "1.0"
+futures-util = { version = "0.3", features = ["sink"], optional = true }
+tokio-tungstenite = { version = "0.26", features = ["native-tls"], optional = true }
+yrs = { version="0.23", features = ["weak", "sync"], optional = true }
+tokio = { version = "1", features = ["full", "net"], optional = true }
 
 [lib]
 proc-macro = true
 
 [features]
-test-utils = []
+test-utils = ["dep:futures-util", "dep:tokio-tungstenite", "dep:yrs", "dep:tokio"]
 
 [dev-dependencies]
 yrs-tokio = { path = "../yrs-tokio" }
 yrs-axum-ws = { path = "../yrs-axum-ws" }
-yrs = { version="0.23", features = ["weak", "sync"] }
 axum = { version = "0.8", features = ["ws"] }
-tokio = { version = "1", features = ["full", "net"] }
-futures-util = { version = "0.3", features = ["sink"] }
-tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
+# 文档注释使用，编辑器检测不到使用
+futures-core="0.3"
