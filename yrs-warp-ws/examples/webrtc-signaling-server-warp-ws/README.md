@@ -4,7 +4,7 @@
 In order to generate static website content, first you need build it. This can be done via npm.
 
 ```bash
-cd examples/webrtc-signaling-server-warp-ws/frontend
+cd ../examples/webrtc-signaling-server-warp-ws/frontend
 npm install
 npm run build
 ```
