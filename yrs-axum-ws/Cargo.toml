@@ -12,7 +12,7 @@ readme = "./README.md"
 
 [dependencies]
 yrs = { version="0.23", features = ["weak", "sync"] }
-yrs-tokio = { path = "../yrs-tokio", features = ["test-utils"] }
+yrs-tokio = { version = "0.1.0", path = "../yrs-tokio", features = ["test-utils"] }
 axum = { version = "0.8", features = ["ws"] }
 futures-core = "0.3"
 futures-util = { version = "0.3", features = ["sink"] }

@@ -11,7 +11,7 @@ repository = "https://github.com/icode/yrs-tokio"
 readme = "./README.md"
 
 [dependencies]
-yrs-tokio = { path = "../yrs-tokio", features = ["test-utils"] }
+yrs-tokio = { version = "0.1.0", path = "../yrs-tokio", features = ["test-utils"] }
 yrs = { version="0.23", features = ["weak", "sync"] }
 warp = "0.3"
 tokio = { version = "1.45", features = ["rt", "net", "sync", "macros", "rt-multi-thread"] }
