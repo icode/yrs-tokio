@@ -6,6 +6,9 @@ description = "Axum WebSocket integration for yrs-tokio macros"
 license = "MIT"
 authors = ["icode <intelligentcodemail@gmail.com>"]
 keywords = ["crdt", "yrs", "tokio", "macros"]
+homepage = "https://github.com/icode/yrs-tokio"
+repository = "https://github.com/icode/yrs-tokio"
+readme = "./README.md"
 
 [dependencies]
 quote = "1.0.35"

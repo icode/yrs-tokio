@@ -6,6 +6,9 @@ description = "Warp WebSocket integration for yrs-tokio"
 license = "MIT"
 authors = ["icode <intelligentcodemail@gmail.com>"]
 keywords = ["crdt", "yrs", "tokio", "websocket"]
+homepage = "https://github.com/icode/yrs-tokio"
+repository = "https://github.com/icode/yrs-tokio"
+readme = "./README.md"
 
 [dependencies]
 yrs-tokio = { path = "../yrs-tokio", features = ["test-utils"] }
