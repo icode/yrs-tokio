@@ -11,7 +11,7 @@ npm run build
 
 These commands will install all dependencies and run [rollup.js](https://rollupjs.org/), which is used for bundling the JavaScript code and dependencies for Code Mirror.
 
-Once the steps above are done, a `./frontent/dist` directory should appear. If so, all you need to do is to run following command from the */yrs-axum-ws* or *main git repository* directory:
+Once the steps above are done, a `dist` directory should appear. If so, all you need to do is to run following command from the */yrs-axum-ws* or *main git repository* directory:
 
 ```bash
 cargo run --example code-mirror-axum-ws

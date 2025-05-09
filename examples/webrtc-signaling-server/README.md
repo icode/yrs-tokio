@@ -10,4 +10,4 @@ npm run build
 
 These commands will install all dependencies and run [rollup.js](https://rollupjs.org/), which is used for bundling the JavaScript code and dependencies for Code Mirror.
 
-Once the steps above are done, a `./frontent/dist` directory should appear. 
+Once the steps above are done, a `dist` directory should appear. 
