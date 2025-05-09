@@ -927,10 +927,16 @@ pub fn yrs_common_sink(attr: TokenStream, item: TokenStream) -> TokenStream {
                 syn::parse_quote!(::yrs_tokio::signaling::Message);
             let target_qualified_signaling: Type = syn::parse_quote!(yrs_tokio::signaling::Message);
 
-            let is_targeted_signaling_message_type = outer_sink_item_type
-                == target_simple_signaling
-                || outer_sink_item_type == target_fully_qualified_signaling
-                || outer_sink_item_type == target_qualified_signaling;
+            // Convert syn::Type to string for comparison since Type doesn't implement PartialEq
+            let outer_type_str = quote::quote!(#outer_sink_item_type).to_string();
+            let simple_type_str = quote::quote!(#target_simple_signaling).to_string();
+            let fully_qualified_type_str =
+                quote::quote!(#target_fully_qualified_signaling).to_string();
+            let qualified_type_str = quote::quote!(#target_qualified_signaling).to_string();
+
+            let is_targeted_signaling_message_type = outer_type_str == simple_type_str
+                || outer_type_str == fully_qualified_type_str
+                || outer_type_str == qualified_type_str;
 
             let default_body = if is_targeted_signaling_message_type {
                 quote! {
